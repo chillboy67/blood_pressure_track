@@ -32,13 +32,13 @@ Follow these steps to set up and run the project:
 
 ### 1. Clone the Repository  
    ```bash
-   git clone (https://github.com/mindtian/blood_pressure).git
-   cd blood_pressure
+   git clone https://github.com/chillboy67/blood_pressure_track.git
+   cd blood_pressure_track
    ```
 
 ### 2. Create a Virtual Environment  
    ```bash
-   python -m venv env
+   python3 -m venv env
    source env/bin/activate  # On Windows: env\Scripts\activate
    ```
 
@@ -51,6 +51,7 @@ Follow these steps to set up and run the project:
    ```bash
    python tracker.py
    ```
+   On the first run this also creates the `data.db` SQLite file in the project directory.
 
 ### 5. Access the Application  
    - Open your browser and go to: `http://127.0.0.1:5000/`
@@ -142,10 +143,11 @@ The SQLite database (`data.db`) contains the following table:
    - Check the `init_db` function in `tracker.py`.
 
 2. **Port Already in Use**  
-   - If `127.0.0.1:5000` is unavailable, stop any processes using that port or run the app on a different port:  
-     ```bash
-     python tracker.py --port=5001
+   - If `127.0.0.1:5000` is unavailable, either stop the process using that port, or change the port in the last line of `tracker.py`:  
+     ```python
+     app.run(debug=True, port=5001)
      ```
+   - Note that `tracker.py` does not accept command-line options, so passing a flag such as `--port=5001` has no effect.
 
 3. **Dependencies Not Installed**  
    - Double-check your Python environment and ensure Flask is installed.
@@ -178,4 +180,4 @@ If you have any questions or feedback, feel free to reach out:
 
 ---
 
-Thank you for checking out the **blood_perssure_track** project!
+Thank you for checking out the **blood_pressure_track** project!
