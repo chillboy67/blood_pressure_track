@@ -1,5 +1,153 @@
 # blood_pressure_track
 
+A simple web application for recording, analyzing, and tracking blood pressure levels. Built with Python (Flask) and SQLite, it covers a complete flow of data input, evaluation, storage, and history display.
+
+This project was created as a Python course assignment.
+
+---
+
+## Features
+
+1. **Blood Pressure Input**  
+   Enter systolic (high) and diastolic (low) values.
+
+2. **Real-time Analysis**  
+   Classifies readings as **Normal** or **High Blood Pressure** using common thresholds:
+   - Systolic ≥ 140, or
+   - Diastolic ≥ 90
+
+3. **Storage & History**  
+   Saves each submission to SQLite with a timestamp, and lists past records on the home page.
+
+---
+
+## Technologies Used
+
+| Layer | Technology |
+|-------|------------|
+| Backend | Python + Flask |
+| Database | SQLite (`data.db`) |
+| Frontend | HTML (generated via `render_template_string`) |
+
+---
+
+## Project Structure
+
+```
+blood_pressure_track/
+├── tracker.py    # App entry: routes, evaluation logic, database I/O
+└── README.md
+```
+
+The local database file `data.db` is created automatically on first run.
+
+---
+
+## Setup and Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/chillboy67/blood_pressure_track.git
+cd blood_pressure_track
+```
+
+### 2. Create a virtual environment (recommended)
+
+```bash
+python -m venv env
+source env/bin/activate   # Windows: env\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install flask
+```
+
+### 4. Run the application
+
+```bash
+python tracker.py
+```
+
+### 5. Open in browser
+
+Visit: <http://127.0.0.1:5000/>
+
+---
+
+## How to Use
+
+1. On the home page, enter **High Pressure** (systolic) and **Low Pressure** (diastolic).
+2. Click **Submit** to see the evaluation result and timestamp.
+3. Return to the home page to review all historical records.
+
+---
+
+## Routes
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/` | GET | Input form + history list |
+| `/submit` | POST | Evaluate reading, save to DB, show result |
+
+Key pieces in `tracker.py`:
+
+- `init_db()` — create the table if needed  
+- `check_hypertension(high, low)` — apply thresholds and return the result  
+- `home` / `submit` — page rendering and form handling  
+
+---
+
+## Database Schema
+
+Table: `blood_pressure` (file: `data.db`)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Primary key (auto-increment) |
+| `high_pressure` | INTEGER | Systolic value |
+| `low_pressure` | INTEGER | Diastolic value |
+| `result` | TEXT | Evaluation result |
+| `timestamp` | TEXT | Time of submission |
+
+---
+
+## Troubleshooting
+
+**Database file missing**  
+`data.db` is created by `init_db()` on first launch. If creation fails, check write permissions in the working directory.
+
+**Port already in use**  
+Default port is `5000`. Stop the process using that port, or change the port in `app.run`.
+
+**Dependencies not installed**  
+Activate your virtual environment and run `pip install flask`.
+
+---
+
+## Disclaimer
+
+The blood pressure rules in this app are for learning and demonstration only. They are not a medical diagnosis. Seek professional care if you have health concerns.
+
+---
+
+## Author
+
+- **chillboy67** — [GitHub](https://github.com/chillboy67)
+
+---
+
+## License
+
+MIT License. Free to use, modify, and distribute.
+
+---
+---
+
+# blood_pressure_track（中文）
+
 基于 Flask 与 SQLite 的血压记录与追踪 Web 应用。可录入收缩压 / 舒张压，按常用阈值判断是否偏高，并将结果与时间戳持久化保存，方便在首页查看历史记录。
 
 本项目为 Python 课程作业，用于练习 Web 开发、数据库读写与表单交互的完整流程。
