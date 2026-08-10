@@ -1,181 +1,144 @@
 # blood_pressure_track
 
-A simple web application for recording, analyzing, and tracking blood pressure levels. Built with Python (Flask framework) and SQLite database, this project demonstrates a complete workflow of data storage, processing, and display.
+基于 Flask 与 SQLite 的血压记录与追踪 Web 应用。可录入收缩压 / 舒张压，按常用阈值判断是否偏高，并将结果与时间戳持久化保存，方便在首页查看历史记录。
+
+本项目为 Python 课程作业，用于练习 Web 开发、数据库读写与表单交互的完整流程。
 
 ---
 
-## Features
+## 功能
 
-1. **Blood Pressure Input Form**  
-   - Users can input systolic (high pressure) and diastolic (low pressure) values.
+1. **血压录入**  
+   输入收缩压（高压）与舒张压（低压）。
 
-2. **Real-time Blood Pressure Analysis**  
-   - Determines if the entered values indicate **Normal** or **High Blood Pressure** based on standard thresholds.
+2. **即时判断**  
+   根据常用阈值给出 **Normal（正常）** 或 **High Blood Pressure（偏高）** 结果：
+   - 收缩压 ≥ 140，或
+   - 舒张压 ≥ 90
 
-3. **Data Storage and History Display**  
-   - Stores all submissions in an SQLite database with timestamps.  
-   - Displays a history of past records on the homepage.
-
----
-
-## Technologies Used
-
-- **Frontend**: HTML (generated dynamically via Flask templates).
-- **Backend**: Python with Flask.
-- **Database**: SQLite for lightweight data storage.
+3. **存储与历史**  
+   每次提交写入 SQLite，并在首页展示历史记录（数值、判断结果、时间）。
 
 ---
 
-## Setup and Installation
+## 技术栈
 
-Follow these steps to set up and run the project:
-
-### 1. Clone the Repository  
-   ```bash
-   git clone (https://github.com/mindtian/blood_pressure).git
-   cd blood_pressure
-   ```
-
-### 2. Create a Virtual Environment  
-   ```bash
-   python -m venv env
-   source env/bin/activate  # On Windows: env\Scripts\activate
-   ```
-
-### 3. Install Dependencies  
-   ```bash
-   pip install flask
-   ```
-
-### 4. Run the Application  
-   ```bash
-   python tracker.py
-   ```
-
-### 5. Access the Application  
-   - Open your browser and go to: `http://127.0.0.1:5000/`
+| 部分 | 技术 |
+|------|------|
+| 后端 | Python + Flask |
+| 数据 | SQLite（`data.db`） |
+| 前端 | HTML（`render_template_string` 动态生成） |
 
 ---
 
-## Code Creation Thoughts
+## 项目结构
 
-This project was created as part of a Python course assignment. The main objective was to demonstrate the use of Python and Flask in building a simple web application with a database for persistent data storage. Below are the main steps and thoughts behind the code design:
+```
+blood_pressure_track/
+├── tracker.py    # 应用入口：路由、判断逻辑、数据库读写
+└── README.md
+```
 
-### **1. Identifying Core Features**
-- The application needed to allow users to input blood pressure values, analyze them, and store the data.
-- A history feature was included to make the application more practical by allowing users to review their previous records.
-
-### **2. Technology Choices**
-- **Flask**: Chosen for its simplicity and lightweight nature, making it ideal for a small web application.
-- **SQLite**: Used for data storage because it is easy to set up and doesn't require a separate database server.
-- **HTML (via Flask templates)**: Used for dynamic front-end content generation to keep the project simple and functional.
-
-### **3. Code Design Approach**
-1. **Database Layer**:
-   - Created an SQLite database to store user inputs along with timestamps and the evaluation result.
-   - Used a single table with fields for systolic pressure, diastolic pressure, result, and timestamp.
-2. **Routing and Logic Layer**:
-   - Designed two routes:
-     - `/`: Displays the form and history records.
-     - `/submit`: Processes user inputs, evaluates the data, and stores the results in the database.
-   - Used a helper function to encapsulate the logic for determining whether the blood pressure is normal or high.
-3. **Dynamic Frontend**:
-   - Implemented a simple form using Flask's `render_template_string` to allow users to input their blood pressure values.
-   - Dynamically generated history records below the form for better user interaction.
-
-### **4. Learning Objectives**
-- Understand how to use Flask to handle routing and HTTP requests.
-- Learn how to interact with an SQLite database to perform basic CRUD operations.
-- Practice dynamic content rendering using Flask templates.
-- Handle user inputs securely and return meaningful results.
+首次运行会自动创建本地数据库文件 `data.db`。
 
 ---
 
-## Code Explanation
+## 快速开始
 
-### **Database Setup**
-- The database is initialized with a single table for storing blood pressure records. It includes:
-  - `id`: Primary key.
-  - `high_pressure` and `low_pressure`: Inputs from the user.
-  - `result`: Analysis result.
-  - `timestamp`: Time when the record was created.
+### 1. 克隆仓库
 
-### **Blood Pressure Analysis**
-- Blood pressure is categorized as **Normal** or **High Blood Pressure** based on:
-  - Systolic (high) pressure >= 140 or
-  - Diastolic (low) pressure >= 90.
+```bash
+git clone https://github.com/chillboy67/blood_pressure_track.git
+cd blood_pressure_track
+```
 
-### **Routes and Logic**
-1. **Home (`/`)**:
-   - Displays a form for inputting blood pressure values.
-   - Retrieves and displays all past records from the database.
-2. **Submit (`/submit`)**:
-   - Processes user inputs, performs the blood pressure analysis, and saves the results to the database.
-   - Returns a result page with the analysis and a link to go back.
+### 2. 创建虚拟环境（推荐）
 
-### **Frontend Design**
-- A minimal form is dynamically generated for user inputs.
-- History records are displayed below the form to enhance user experience.
+```bash
+python -m venv env
+source env/bin/activate   # Windows: env\Scripts\activate
+```
 
----
+### 3. 安装依赖
 
-## Database Schema
+```bash
+pip install flask
+```
 
-The SQLite database (`data.db`) contains the following table:
+### 4. 启动
 
-| Column         | Type     | Description                         |  
-|----------------|----------|-------------------------------------|  
-| `id`           | INTEGER  | Primary key (auto-increment).       |  
-| `high_pressure`| INTEGER  | Systolic value (input by user).     |  
-| `low_pressure` | INTEGER  | Diastolic value (input by user).    |  
-| `result`       | TEXT     | Analysis result (Normal/High).      |  
-| `timestamp`    | TEXT     | Date and time of input.             |  
+```bash
+python tracker.py
+```
+
+### 5. 访问
+
+浏览器打开：<http://127.0.0.1:5000/>
 
 ---
 
-## Troubleshooting
+## 使用说明
 
-### Common Issues
-
-1. **Database Not Found**  
-   - Ensure the `data.db` file is created during the first run of the application.  
-   - Check the `init_db` function in `tracker.py`.
-
-2. **Port Already in Use**  
-   - If `127.0.0.1:5000` is unavailable, stop any processes using that port or run the app on a different port:  
-     ```bash
-     python tracker.py --port=5001
-     ```
-
-3. **Dependencies Not Installed**  
-   - Double-check your Python environment and ensure Flask is installed.
+1. 在首页表单填写 **High Pressure**（收缩压）与 **Low Pressure**（舒张压）。
+2. 点击 **Submit**，查看本次判断结果与时间。
+3. 返回首页可浏览全部历史记录。
 
 ---
 
-## Contributing
+## 路由说明
 
-Contributions are welcome! If you'd like to improve this project:
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | 录入表单 + 历史记录列表 |
+| `/submit` | POST | 接收表单、判断血压、写入数据库并展示结果 |
 
-1. Fork the repository.  
-2. Create a new feature branch (`git checkout -b feature-name`).  
-3. Commit your changes (`git commit -m "Add feature name"`).  
-4. Push the branch (`git push origin feature-name`).  
-5. Open a Pull Request.
+核心逻辑在 `tracker.py`：
 
----
-
-## License
-
-This project is licensed under the MIT License. You are free to use, modify, and distribute this code.
+- `init_db()`：初始化表结构  
+- `check_hypertension(high, low)`：按阈值返回判断结果  
+- `home` / `submit`：页面展示与提交处理  
 
 ---
 
-## Contact
+## 数据库表结构
 
-If you have any questions or feedback, feel free to reach out:
+表名：`blood_pressure`（文件：`data.db`）
 
-- **GitHub**: https://github.com/chillboy67/blood_pressure_track
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER | 主键，自增 |
+| `high_pressure` | INTEGER | 收缩压 |
+| `low_pressure` | INTEGER | 舒张压 |
+| `result` | TEXT | 判断结果 |
+| `timestamp` | TEXT | 录入时间 |
 
 ---
 
-Thank you for checking out the **blood_perssure_track** project!
+## 常见问题
+
+**数据库文件不存在**  
+首次启动时会由 `init_db()` 自动创建 `data.db`。若异常，检查当前工作目录写权限。
+
+**端口被占用**  
+默认使用 `5000`。可先结束占用进程，或在代码中修改 `app.run` 的端口参数。
+
+**依赖未安装**  
+确认已激活虚拟环境，并执行 `pip install flask`。
+
+---
+
+## 说明
+
+本工具中的血压判断规则仅作学习与演示，不能替代医学诊断。如有健康疑虑，请咨询专业医疗机构。
+
+---
+
+## 作者
+
+- **chillboy67** — [GitHub](https://github.com/chillboy67)
+
+---
+
+## 许可证
+
+MIT License。可自由使用、修改与分发。
