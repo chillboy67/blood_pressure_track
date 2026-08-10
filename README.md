@@ -1,5 +1,7 @@
 # blood_pressure_track
 
+**English** | [中文](./README.cn.md)
+
 A simple web application for recording, analyzing, and tracking blood pressure levels. Built with Python (Flask framework) and SQLite database, this project demonstrates a complete workflow of data storage, processing, and display.
 
 ---

@@ -1,10 +1,10 @@
 # blood_pressure_track
 
+[English](./README.md) | **中文**
+
 基于 Flask 与 SQLite 的血压记录与追踪 Web 应用。可录入收缩压 / 舒张压，按常用阈值判断是否偏高，并将结果与时间戳持久化保存，方便在首页查看历史记录。
 
 本项目为 Python 课程作业，用于练习 Web 开发、数据库读写与表单交互的完整流程。
-
-英文说明见 [README.md](./README.md)。
 
 ---
 
