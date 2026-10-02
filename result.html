@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>测量结果 - 血压记录与追踪</title>
+<link rel="stylesheet" href="static/style.css">
+<script src="static/mock-data.js"></script>
+<script src="static/app.js" defer></script>
+</head>
+<body data-page="result">
+<!-- NAV START -->
+<header class="site-nav">
+<div class="nav-inner">
+<a class="brand" href="index.html">
+<span class="brand-icon" aria-hidden="true">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></svg>
+</span>
+      血压记录
+</a>
+<nav class="nav-links">
+<a href="index.html" data-nav="index">首页</a>
+<a href="result.html" data-nav="result">结果页</a>
+<a href="history.html" data-nav="history">历史记录</a>
+</nav>
+</div>
+</header>
+<!-- NAV END -->
+<main class="container narrow">
+<section class="card result-card">
+<p class="result-label">本次测量结果</p>
+<div class="result-values">
+<span id="result-high">--</span><span class="slash">/</span><span id="result-low">--</span>
+<span class="unit">mmHg（收缩压 / 舒张压）</span>
+</div>
+<p class="result-pulse">脉搏 <strong id="result-pulse">--</strong> 次/分</p>
+<div class="result-badge-wrap" id="result-badge"></div>
+<p class="result-tip" id="result-tip"></p>
+<p class="result-meta" id="result-meta"></p>
+<div class="result-actions">
+<a class="btn btn-primary" href="index.html">继续记录</a>
+<a class="btn btn-outline" href="history.html">查看历史</a>
+</div>
+</section>
+</main>
+<!-- FOOTER START -->
+<footer class="site-footer">
+<p>本工具仅供记录参考，不能替代医生诊断。</p>
+</footer>
+<!-- FOOTER END -->
+</body>
+</html>

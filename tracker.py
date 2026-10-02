@@ -1,102 +1,589 @@
+from __future__ import annotations
+
+import csv
+import io
+import os
 import sqlite3
-from datetime import datetime
-from flask import Flask, request, render_template_string
+from collections.abc import Mapping
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, cast
 
-app = Flask(__name__)
+import click
+from flask import (
+    Blueprint,
+    Flask,
+    Response,
+    abort,
+    current_app,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
+from flask.cli import with_appcontext
+from flask.typing import ResponseReturnValue
 
-def init_db():
-    """
-    initialize sqlite database and tables
-    """
-    conn = sqlite3.connect('data.db')   #connect to the db file
-    cursor = conn.cursor()
-    cursor.execute('''
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATABASE = BASE_DIR / "data.db"
+
+bp = Blueprint("main", __name__)
+
+RECORD_SELECT = """
+    SELECT
+        id,
+        high_pressure,
+        low_pressure,
+        pulse,
+        COALESCE(NULLIF(arm, ''), 'left') AS arm,
+        COALESCE(NULLIF(measured_at, ''), timestamp) AS measured_at,
+        COALESCE(note, '') AS note,
+        COALESCE(result, '') AS result
+    FROM blood_pressure
+"""
+
+
+def get_db() -> sqlite3.Connection:
+    """Return one SQLite connection reused for the current request/context."""
+    if "db" not in g:
+        database = Path(current_app.config["DATABASE"])
+        database.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(
+            database,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            timeout=10,
+        )
+        connection.row_factory = sqlite3.Row
+        g.db = connection
+    return cast(sqlite3.Connection, g.db)
+
+
+def close_db(_error: BaseException | None = None) -> None:
+    """Close the context-bound database connection, if one was opened."""
+    connection = g.pop("db", None)
+    if connection is not None:
+        cast(sqlite3.Connection, connection).close()
+
+
+def init_db() -> None:
+    """Create the current schema and migrate databases made by the old app."""
+    connection = get_db()
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS blood_pressure (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            high_pressure INTEGER,
-            low_pressure INTEGER,
+            high_pressure INTEGER NOT NULL,
+            low_pressure INTEGER NOT NULL,
+            pulse INTEGER,
+            arm TEXT NOT NULL DEFAULT 'left',
+            measured_at TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
             result TEXT NOT NULL,
             timestamp TEXT NOT NULL
         )
-    ''')
-    conn.commit()   #save changes to the db
-    conn.close()    #close the connection to the db
-
-def check_hypertension(high, low):
-    """
-    see if is hypertension
-    """
-    if high >= 140 or low >= 90:
-        return "High Blood Pressure"
-    else:
-        return "Normal"
-
-@app.route('/')
-def home():
-    """
-    show a dynamically generated form page, and display the history records
-    """
-    conn = sqlite3.connect('data.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT high_pressure, low_pressure, result, timestamp FROM blood_pressure")
-    records = cursor.fetchall() #get all records form the db
-    conn.close()    #close the connection
-
-#convert the records into the html for display
-    records_html = ""
-    for record in records:
-        records_html += f"""
-            <p>High Pressure: {record[0]}, Low Pressure: {record[1]}, Result: {record[2]}, Timestamp:{record[3]}</p>
         """
+    )
 
-#generate the html page
-    html_code = f'''
-    <h1>Check Blood Pressure</h1>
-    <form action="/submit" method="post">
-        <label>High Pressure:</label>
-        <input type="number" name="high_pressure" required><br><br>
-        <label>Low Pressure:</label>
-        <input type="number" name="low_pressure" required><br><br>
-        <button type="submit">Submit</button>
-    </form>
-    <hr>
-    <h2>History Records</h2>
-    {records_html}
-    '''
-    return render_template_string(html_code)
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(blood_pressure)").fetchall()
+    }
+    migrations = {
+        "pulse": "INTEGER",
+        "arm": "TEXT NOT NULL DEFAULT 'left'",
+        "measured_at": "TEXT",
+        "note": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, definition in migrations.items():
+        if column not in columns:
+            connection.execute(
+                f"ALTER TABLE blood_pressure ADD COLUMN {column} {definition}"
+            )
 
-@app.route('/submit', methods=['POST'])
-def submit():
-    """
-    accept user's information about blood pressure, judge whether it is hypertension or normal, and restore it to the db
-    """
-    #get user inputs from the form
-    high = int(request.form['high_pressure'])
-    low = int(request.form['low_pressure'])
-    result = check_hypertension(high, low)  #evaluate the blood pressure
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')    #get the current time
+    connection.execute(
+        """
+        UPDATE blood_pressure
+        SET measured_at = timestamp
+        WHERE measured_at IS NULL OR measured_at = ''
+        """
+    )
+    connection.execute(
+        "UPDATE blood_pressure SET arm = 'left' WHERE arm IS NULL OR arm = ''"
+    )
+    connection.execute("UPDATE blood_pressure SET note = '' WHERE note IS NULL")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_blood_pressure_measured_at
+        ON blood_pressure(measured_at DESC, id DESC)
+        """
+    )
+    connection.commit()
 
-#save the submitted data to the db
-    conn = sqlite3.connect('data.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO blood_pressure (high_pressure, low_pressure, result, timestamp)
-        VALUES (?, ?, ?, ?)
-        ''', (high, low, result, timestamp))
-    conn.commit()
-    conn.close()
 
-#show the result page
-    result_page = f'''
-    <h1>Blood Pressure Result</h1>
-    <p>High Pressure: {high}</p>
-    <p>Low Pressure: {low}</p>
-    <p>Result: {result}</p>
-    <p>Timestamp: {timestamp}</p>
-    <a href="/">Go Back</a>
-    '''
-    return render_template_string(result_page)
+@click.command("init-db")
+@with_appcontext
+def init_db_command() -> None:
+    """Create or migrate the configured database."""
+    init_db()
+    click.echo("Database initialized.")
 
-if __name__ == '__main__':
-    init_db()   #perpare the db
-    app.run(debug=True) #start the server
+
+def classify_bp(high: int, low: int) -> dict[str, str]:
+    """Use the same six-level classification shown by the frontend."""
+    if high < 90 or low < 60:
+        return {"level": "low", "label": "低血压"}
+    if high >= 180 or low >= 110:
+        return {"level": "grade3", "label": "3 级高血压"}
+    if high >= 160 or low >= 100:
+        return {"level": "grade2", "label": "2 级高血压"}
+    if high >= 140 or low >= 90:
+        return {"level": "grade1", "label": "1 级高血压"}
+    if high >= 120 or low >= 80:
+        return {"level": "high-normal", "label": "正常高值"}
+    return {"level": "normal", "label": "正常"}
+
+
+def check_hypertension(high: int, low: int) -> str:
+    """Backward-compatible helper kept for callers of the original project."""
+    return "High Blood Pressure" if high >= 140 or low >= 90 else "Normal"
+
+
+def _parse_integer(
+    form: Mapping[str, Any],
+    name: str,
+    label: str,
+    minimum: int,
+    maximum: int,
+    errors: dict[str, str],
+    *,
+    required: bool,
+) -> int | None:
+    raw_value = str(form.get(name, "")).strip()
+    if not raw_value:
+        if required:
+            errors[name] = f"请填写{label}"
+        return None
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        errors[name] = f"{label}必须是整数"
+        return None
+
+    if not minimum <= value <= maximum:
+        errors[name] = f"{label}需在 {minimum}–{maximum} 之间"
+        return None
+    return value
+
+
+def validate_record(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Validate and normalize both create and edit form submissions."""
+    errors: dict[str, str] = {}
+    high = _parse_integer(
+        form, "high_pressure", "收缩压", 60, 260, errors, required=True
+    )
+    low = _parse_integer(
+        form, "low_pressure", "舒张压", 30, 160, errors, required=True
+    )
+    pulse = _parse_integer(
+        form, "pulse", "脉搏", 30, 220, errors, required=False
+    )
+
+    if high is not None and low is not None and high <= low:
+        errors["low_pressure"] = "收缩压需大于舒张压，请检查输入"
+
+    arm = str(form.get("arm", "left")).strip() or "left"
+    if arm not in {"left", "right"}:
+        errors["arm"] = "测量部位只能是左臂或右臂"
+
+    measured_raw = str(form.get("measured_at", "")).strip()
+    if measured_raw:
+        measured_at = None
+        for date_format in (
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                measured_at = datetime.strptime(measured_raw, date_format)
+                break
+            except ValueError:
+                continue
+        if measured_at is None:
+            errors["measured_at"] = "测量时间格式不正确"
+    else:
+        measured_at = datetime.now()
+
+    note = str(form.get("note", "")).strip()
+    if len(note) > 100:
+        errors["note"] = "备注最多 100 字"
+
+    data: dict[str, Any] = {
+        "high_pressure": high,
+        "low_pressure": low,
+        "pulse": pulse,
+        "arm": arm,
+        "measured_at": (
+            measured_at.strftime("%Y-%m-%d %H:%M") if measured_at else None
+        ),
+        "note": note,
+    }
+    if high is not None and low is not None:
+        data["classification"] = classify_bp(high, low)
+    return data, errors
+
+
+def row_to_record(row: sqlite3.Row) -> dict[str, Any]:
+    high = int(row["high_pressure"])
+    low = int(row["low_pressure"])
+    classification = classify_bp(high, low)
+    return {
+        "id": int(row["id"]),
+        "high_pressure": high,
+        "low_pressure": low,
+        "pulse": int(row["pulse"]) if row["pulse"] is not None else None,
+        "arm": row["arm"] or "left",
+        "measured_at": row["measured_at"],
+        "note": row["note"] or "",
+        "result": classification["label"],
+        "level": classification["level"],
+    }
+
+
+def fetch_records(days: int | None = None) -> list[dict[str, Any]]:
+    query = RECORD_SELECT
+    parameters: list[Any] = []
+    if days is not None:
+        cutoff = datetime.now() - timedelta(days=days)
+        query += """
+            WHERE datetime(COALESCE(NULLIF(measured_at, ''), timestamp))
+                >= datetime(?)
+        """
+        parameters.append(cutoff.strftime("%Y-%m-%d %H:%M:%S"))
+    query += " ORDER BY datetime(measured_at) DESC, id DESC"
+
+    rows = get_db().execute(query, parameters).fetchall()
+    return [row_to_record(row) for row in rows]
+
+
+def fetch_record(record_id: int) -> dict[str, Any] | None:
+    row = get_db().execute(
+        RECORD_SELECT + " WHERE id = ?", (record_id,)
+    ).fetchone()
+    return row_to_record(row) if row else None
+
+
+def template_values(record: Mapping[str, Any]) -> dict[str, Any]:
+    measured_at = str(record.get("measured_at", ""))
+    return {
+        "high_pressure": record.get("high_pressure", ""),
+        "low_pressure": record.get("low_pressure", ""),
+        "pulse": record.get("pulse", ""),
+        "arm": record.get("arm", "left"),
+        "measured_at": measured_at.replace(" ", "T")[:16],
+        "note": record.get("note", ""),
+    }
+
+
+@bp.get("/")
+@bp.get("/index.html")
+def home() -> ResponseReturnValue:
+    return send_from_directory(BASE_DIR, "index.html")
+
+
+@bp.get("/result.html")
+def result_page() -> ResponseReturnValue:
+    return send_from_directory(BASE_DIR, "result.html")
+
+
+@bp.get("/history.html")
+def history_page() -> ResponseReturnValue:
+    return send_from_directory(BASE_DIR, "history.html")
+
+
+@bp.get("/health")
+def health() -> ResponseReturnValue:
+    get_db().execute("SELECT 1").fetchone()
+    return jsonify({"status": "ok"})
+
+
+@bp.post("/submit")
+def submit() -> ResponseReturnValue:
+    data, errors = validate_record(request.form)
+    if errors:
+        return jsonify({"error": "表单校验失败", "errors": errors}), 400
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    connection = get_db()
+    connection.execute(
+        """
+        INSERT INTO blood_pressure (
+            high_pressure, low_pressure, pulse, arm, measured_at,
+            note, result, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data["high_pressure"],
+            data["low_pressure"],
+            data["pulse"],
+            data["arm"],
+            data["measured_at"],
+            data["note"],
+            data["classification"]["label"],
+            now,
+        ),
+    )
+    connection.commit()
+
+    return redirect(
+        url_for(
+            "main.result_page",
+            high=data["high_pressure"],
+            low=data["low_pressure"],
+            pulse=data["pulse"],
+        ),
+        code=303,
+    )
+
+
+@bp.route("/edit/<int:record_id>", methods=["GET", "POST"])
+def edit_record(record_id: int) -> ResponseReturnValue:
+    record = fetch_record(record_id)
+    if record is None:
+        abort(404)
+    assert record is not None
+
+    if request.method == "GET":
+        return render_template(
+            "edit.html",
+            record_id=record_id,
+            values=template_values(record),
+            errors={},
+        )
+
+    data, errors = validate_record(request.form)
+    if errors:
+        return (
+            render_template(
+                "edit.html",
+                record_id=record_id,
+                values=template_values(request.form),
+                errors=errors,
+            ),
+            400,
+        )
+
+    connection = get_db()
+    cursor = connection.execute(
+        """
+        UPDATE blood_pressure
+        SET high_pressure = ?, low_pressure = ?, pulse = ?, arm = ?,
+            measured_at = ?, note = ?, result = ?
+        WHERE id = ?
+        """,
+        (
+            data["high_pressure"],
+            data["low_pressure"],
+            data["pulse"],
+            data["arm"],
+            data["measured_at"],
+            data["note"],
+            data["classification"]["label"],
+            record_id,
+        ),
+    )
+    connection.commit()
+
+    if cursor.rowcount == 0:
+        abort(404)
+    return redirect(url_for("main.history_page"), code=303)
+
+
+@bp.post("/delete/<int:record_id>")
+def delete_record(record_id: int) -> ResponseReturnValue:
+    connection = get_db()
+    cursor = connection.execute(
+        "DELETE FROM blood_pressure WHERE id = ?", (record_id,)
+    )
+    connection.commit()
+
+    if cursor.rowcount == 0:
+        return jsonify({"error": "记录不存在或已被删除"}), 404
+    return Response(status=204)
+
+
+@bp.get("/api/records")
+def api_records() -> ResponseReturnValue:
+    raw_days = request.args.get("days", "30").strip().lower()
+    if raw_days == "all":
+        days = None
+    else:
+        try:
+            days = int(raw_days)
+        except ValueError:
+            return jsonify({"error": "days 必须是正整数或 all"}), 400
+        if not 1 <= days <= 3650:
+            return jsonify({"error": "days 需在 1–3650 之间"}), 400
+    return jsonify(fetch_records(days))
+
+
+@bp.get("/api/stats")
+def api_stats() -> ResponseReturnValue:
+    records = fetch_records()
+    now = datetime.now()
+
+    def in_recent_days(record: Mapping[str, Any], days: int) -> bool:
+        try:
+            measured_at = datetime.fromisoformat(str(record["measured_at"]))
+        except (TypeError, ValueError):
+            return False
+        return measured_at >= now - timedelta(days=days)
+
+    last7 = [record for record in records if in_recent_days(record, 7)]
+    last30 = [record for record in records if in_recent_days(record, 30)]
+
+    def average(items: list[dict[str, Any]]) -> dict[str, int] | None:
+        if not items:
+            return None
+        return {
+            "high": round(
+                sum(item["high_pressure"] for item in items) / len(items)
+            ),
+            "low": round(sum(item["low_pressure"] for item in items) / len(items)),
+        }
+
+    high_count = sum(
+        record["level"] in {"grade1", "grade2", "grade3"}
+        for record in last30
+    )
+    return jsonify(
+        {
+            "latest": records[0] if records else None,
+            "avg7": average(last7),
+            "highRatio30": high_count / len(last30) if last30 else 0,
+            "total": len(records),
+        }
+    )
+
+
+@bp.post("/api/insight")
+def api_insight() -> ResponseReturnValue:
+    records = fetch_records(30)
+    if not records:
+        return jsonify({"text": "近 30 天暂无记录，持续记录后才能生成趋势解读。"})
+
+    count = len(records)
+    average_high = round(sum(r["high_pressure"] for r in records) / count)
+    average_low = round(sum(r["low_pressure"] for r in records) / count)
+    high_count = sum(
+        r["level"] in {"grade1", "grade2", "grade3"} for r in records
+    )
+    highest = max(records, key=lambda r: (r["high_pressure"], r["low_pressure"]))
+
+    trend_text = "记录数量还不足以判断升降趋势"
+    if count >= 4:
+        chronological = list(reversed(records))
+        middle = len(chronological) // 2
+        first_half = chronological[:middle]
+        second_half = chronological[middle:]
+        first_average = sum(r["high_pressure"] for r in first_half) / len(first_half)
+        second_average = sum(r["high_pressure"] for r in second_half) / len(second_half)
+        change = round(second_average - first_average)
+        if change >= 3:
+            trend_text = f"后半段平均收缩压较前半段上升约 {change} mmHg"
+        elif change <= -3:
+            trend_text = f"后半段平均收缩压较前半段下降约 {abs(change)} mmHg"
+        else:
+            trend_text = "前后半段平均收缩压总体平稳"
+
+    text = (
+        f"近 30 天共记录 {count} 次，平均血压约为 {average_high}/{average_low} mmHg；"
+        f"其中 {high_count} 次达到 1 级高血压及以上。{trend_text}。"
+        f"最高收缩压为 {highest['high_pressure']} mmHg"
+        f"（{highest['measured_at']}）。建议尽量在固定时间、同一侧手臂持续测量；"
+        "若血压连续偏高或伴有不适，请及时咨询医生。本内容仅作数据趋势参考，不构成医疗诊断。"
+    )
+    return jsonify({"text": text})
+
+
+def csv_safe(value: Any) -> Any:
+    """Prevent spreadsheet software from evaluating user text as a formula."""
+    if not isinstance(value, str):
+        return value
+    if value.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
+@bp.get("/export")
+def export_records() -> ResponseReturnValue:
+    records = fetch_records()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "编号",
+            "测量时间",
+            "收缩压(mmHg)",
+            "舒张压(mmHg)",
+            "脉搏(次/分)",
+            "测量部位",
+            "分级",
+            "备注",
+        ]
+    )
+    for record in records:
+        writer.writerow(
+            [
+                record["id"],
+                record["measured_at"],
+                record["high_pressure"],
+                record["low_pressure"],
+                record["pulse"] if record["pulse"] is not None else "",
+                "右臂" if record["arm"] == "right" else "左臂",
+                record["result"],
+                csv_safe(record["note"]),
+            ]
+        )
+
+    filename = f"blood_pressure_records_{datetime.now():%Y%m%d}.csv"
+    response = Response(
+        "\ufeff" + output.getvalue(), content_type="text/csv; charset=utf-8"
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def create_app(test_config: Mapping[str, Any] | None = None) -> Flask:
+    """Create and configure an isolated Flask application instance."""
+    app = Flask(
+        __name__,
+        static_folder=str(BASE_DIR / "static"),
+        static_url_path="/static",
+        template_folder=str(BASE_DIR / "templates"),
+    )
+    app.config.from_mapping(
+        DATABASE=os.environ.get(
+            "BLOOD_PRESSURE_DATABASE", str(DEFAULT_DATABASE)
+        ),
+    )
+    if test_config is not None:
+        app.config.update(test_config)
+
+    setattr(app.json, "ensure_ascii", False)
+    app.teardown_appcontext(close_db)
+    app.cli.add_command(init_db_command)
+    app.register_blueprint(bp)
+
+    with app.app_context():
+        init_db()
+
+    return app
+
+
+if __name__ == "__main__":
+    create_app().run()

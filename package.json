@@ -1,0 +1,10 @@
+{
+  "name": "bp-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "血压记录与追踪 - Flask 应用的静态前端预览工具",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "node build.js"
+  }
+}
