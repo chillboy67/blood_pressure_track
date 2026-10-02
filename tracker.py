@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import click
 from flask import (
+    Blueprint,
     Flask,
     Response,
     abort,
+    current_app,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -19,18 +24,13 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from flask.cli import with_appcontext
 from flask.typing import ResponseReturnValue
 
 BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATABASE = BASE_DIR / "data.db"
 
-app = Flask(
-    __name__,
-    static_folder=str(BASE_DIR / "static"),
-    static_url_path="/static",
-    template_folder=str(BASE_DIR / "templates"),
-)
-app.config["DATABASE"] = str(BASE_DIR / "data.db")
-setattr(app.json, "ensure_ascii", False)
+bp = Blueprint("main", __name__)
 
 RECORD_SELECT = """
     SELECT
@@ -47,74 +47,88 @@ RECORD_SELECT = """
 
 
 def get_db() -> sqlite3.Connection:
-    """Open a short-lived SQLite connection for the current operation."""
-    database = Path(app.config["DATABASE"])
-    database.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(database)
-    connection.row_factory = sqlite3.Row
-    return connection
+    """Return one SQLite connection reused for the current request/context."""
+    if "db" not in g:
+        database = Path(current_app.config["DATABASE"])
+        database.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(
+            database,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            timeout=10,
+        )
+        connection.row_factory = sqlite3.Row
+        g.db = connection
+    return cast(sqlite3.Connection, g.db)
+
+
+def close_db(_error: BaseException | None = None) -> None:
+    """Close the context-bound database connection, if one was opened."""
+    connection = g.pop("db", None)
+    if connection is not None:
+        cast(sqlite3.Connection, connection).close()
 
 
 def init_db() -> None:
     """Create the current schema and migrate databases made by the old app."""
     connection = get_db()
-    try:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS blood_pressure (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                high_pressure INTEGER NOT NULL,
-                low_pressure INTEGER NOT NULL,
-                pulse INTEGER,
-                arm TEXT NOT NULL DEFAULT 'left',
-                measured_at TEXT NOT NULL,
-                note TEXT NOT NULL DEFAULT '',
-                result TEXT NOT NULL,
-                timestamp TEXT NOT NULL
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS blood_pressure (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            high_pressure INTEGER NOT NULL,
+            low_pressure INTEGER NOT NULL,
+            pulse INTEGER,
+            arm TEXT NOT NULL DEFAULT 'left',
+            measured_at TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            result TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+        """
+    )
+
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(blood_pressure)").fetchall()
+    }
+    migrations = {
+        "pulse": "INTEGER",
+        "arm": "TEXT NOT NULL DEFAULT 'left'",
+        "measured_at": "TEXT",
+        "note": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column, definition in migrations.items():
+        if column not in columns:
+            connection.execute(
+                f"ALTER TABLE blood_pressure ADD COLUMN {column} {definition}"
             )
-            """
-        )
 
-        columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(blood_pressure)").fetchall()
-        }
-        migrations = {
-            "pulse": "INTEGER",
-            "arm": "TEXT NOT NULL DEFAULT 'left'",
-            "measured_at": "TEXT",
-            "note": "TEXT NOT NULL DEFAULT ''",
-        }
-        for column, definition in migrations.items():
-            if column not in columns:
-                connection.execute(
-                    f"ALTER TABLE blood_pressure ADD COLUMN {column} {definition}"
-                )
+    connection.execute(
+        """
+        UPDATE blood_pressure
+        SET measured_at = timestamp
+        WHERE measured_at IS NULL OR measured_at = ''
+        """
+    )
+    connection.execute(
+        "UPDATE blood_pressure SET arm = 'left' WHERE arm IS NULL OR arm = ''"
+    )
+    connection.execute("UPDATE blood_pressure SET note = '' WHERE note IS NULL")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_blood_pressure_measured_at
+        ON blood_pressure(measured_at DESC, id DESC)
+        """
+    )
+    connection.commit()
 
-        # Old versions only had timestamp. Keep those rows and expose that value
-        # through the new measured_at field.
-        connection.execute(
-            """
-            UPDATE blood_pressure
-            SET measured_at = timestamp
-            WHERE measured_at IS NULL OR measured_at = ''
-            """
-        )
-        connection.execute(
-            "UPDATE blood_pressure SET arm = 'left' WHERE arm IS NULL OR arm = ''"
-        )
-        connection.execute(
-            "UPDATE blood_pressure SET note = '' WHERE note IS NULL"
-        )
-        connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_blood_pressure_measured_at
-            ON blood_pressure(measured_at)
-            """
-        )
-        connection.commit()
-    finally:
-        connection.close()
+
+@click.command("init-db")
+@with_appcontext
+def init_db_command() -> None:
+    """Create or migrate the configured database."""
+    init_db()
+    click.echo("Database initialized.")
 
 
 def classify_bp(high: int, low: int) -> dict[str, str]:
@@ -252,22 +266,14 @@ def fetch_records(days: int | None = None) -> list[dict[str, Any]]:
         parameters.append(cutoff.strftime("%Y-%m-%d %H:%M:%S"))
     query += " ORDER BY datetime(measured_at) DESC, id DESC"
 
-    connection = get_db()
-    try:
-        rows = connection.execute(query, parameters).fetchall()
-    finally:
-        connection.close()
+    rows = get_db().execute(query, parameters).fetchall()
     return [row_to_record(row) for row in rows]
 
 
 def fetch_record(record_id: int) -> dict[str, Any] | None:
-    connection = get_db()
-    try:
-        row = connection.execute(
-            RECORD_SELECT + " WHERE id = ?", (record_id,)
-        ).fetchone()
-    finally:
-        connection.close()
+    row = get_db().execute(
+        RECORD_SELECT + " WHERE id = ?", (record_id,)
+    ).fetchone()
     return row_to_record(row) if row else None
 
 
@@ -283,23 +289,29 @@ def template_values(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.get("/")
-@app.get("/index.html")
+@bp.get("/")
+@bp.get("/index.html")
 def home() -> ResponseReturnValue:
     return send_from_directory(BASE_DIR, "index.html")
 
 
-@app.get("/result.html")
+@bp.get("/result.html")
 def result_page() -> ResponseReturnValue:
     return send_from_directory(BASE_DIR, "result.html")
 
 
-@app.get("/history.html")
+@bp.get("/history.html")
 def history_page() -> ResponseReturnValue:
     return send_from_directory(BASE_DIR, "history.html")
 
 
-@app.post("/submit")
+@bp.get("/health")
+def health() -> ResponseReturnValue:
+    get_db().execute("SELECT 1").fetchone()
+    return jsonify({"status": "ok"})
+
+
+@bp.post("/submit")
 def submit() -> ResponseReturnValue:
     data, errors = validate_record(request.form)
     if errors:
@@ -307,32 +319,29 @@ def submit() -> ResponseReturnValue:
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     connection = get_db()
-    try:
-        connection.execute(
-            """
-            INSERT INTO blood_pressure (
-                high_pressure, low_pressure, pulse, arm, measured_at,
-                note, result, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                data["high_pressure"],
-                data["low_pressure"],
-                data["pulse"],
-                data["arm"],
-                data["measured_at"],
-                data["note"],
-                data["classification"]["label"],
-                now,
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    connection.execute(
+        """
+        INSERT INTO blood_pressure (
+            high_pressure, low_pressure, pulse, arm, measured_at,
+            note, result, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data["high_pressure"],
+            data["low_pressure"],
+            data["pulse"],
+            data["arm"],
+            data["measured_at"],
+            data["note"],
+            data["classification"]["label"],
+            now,
+        ),
+    )
+    connection.commit()
 
     return redirect(
         url_for(
-            "result_page",
+            "main.result_page",
             high=data["high_pressure"],
             low=data["low_pressure"],
             pulse=data["pulse"],
@@ -341,7 +350,7 @@ def submit() -> ResponseReturnValue:
     )
 
 
-@app.route("/edit/<int:record_id>", methods=["GET", "POST"])
+@bp.route("/edit/<int:record_id>", methods=["GET", "POST"])
 def edit_record(record_id: int) -> ResponseReturnValue:
     record = fetch_record(record_id)
     if record is None:
@@ -369,51 +378,45 @@ def edit_record(record_id: int) -> ResponseReturnValue:
         )
 
     connection = get_db()
-    try:
-        cursor = connection.execute(
-            """
-            UPDATE blood_pressure
-            SET high_pressure = ?, low_pressure = ?, pulse = ?, arm = ?,
-                measured_at = ?, note = ?, result = ?
-            WHERE id = ?
-            """,
-            (
-                data["high_pressure"],
-                data["low_pressure"],
-                data["pulse"],
-                data["arm"],
-                data["measured_at"],
-                data["note"],
-                data["classification"]["label"],
-                record_id,
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    cursor = connection.execute(
+        """
+        UPDATE blood_pressure
+        SET high_pressure = ?, low_pressure = ?, pulse = ?, arm = ?,
+            measured_at = ?, note = ?, result = ?
+        WHERE id = ?
+        """,
+        (
+            data["high_pressure"],
+            data["low_pressure"],
+            data["pulse"],
+            data["arm"],
+            data["measured_at"],
+            data["note"],
+            data["classification"]["label"],
+            record_id,
+        ),
+    )
+    connection.commit()
 
     if cursor.rowcount == 0:
         abort(404)
-    return redirect(url_for("history_page"), code=303)
+    return redirect(url_for("main.history_page"), code=303)
 
 
-@app.post("/delete/<int:record_id>")
+@bp.post("/delete/<int:record_id>")
 def delete_record(record_id: int) -> ResponseReturnValue:
     connection = get_db()
-    try:
-        cursor = connection.execute(
-            "DELETE FROM blood_pressure WHERE id = ?", (record_id,)
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    cursor = connection.execute(
+        "DELETE FROM blood_pressure WHERE id = ?", (record_id,)
+    )
+    connection.commit()
 
     if cursor.rowcount == 0:
         return jsonify({"error": "记录不存在或已被删除"}), 404
     return Response(status=204)
 
 
-@app.get("/api/records")
+@bp.get("/api/records")
 def api_records() -> ResponseReturnValue:
     raw_days = request.args.get("days", "30").strip().lower()
     if raw_days == "all":
@@ -428,7 +431,7 @@ def api_records() -> ResponseReturnValue:
     return jsonify(fetch_records(days))
 
 
-@app.get("/api/stats")
+@bp.get("/api/stats")
 def api_stats() -> ResponseReturnValue:
     records = fetch_records()
     now = datetime.now()
@@ -467,7 +470,7 @@ def api_stats() -> ResponseReturnValue:
     )
 
 
-@app.post("/api/insight")
+@bp.post("/api/insight")
 def api_insight() -> ResponseReturnValue:
     records = fetch_records(30)
     if not records:
@@ -516,7 +519,7 @@ def csv_safe(value: Any) -> Any:
     return value
 
 
-@app.get("/export")
+@bp.get("/export")
 def export_records() -> ResponseReturnValue:
     records = fetch_records()
     output = io.StringIO(newline="")
@@ -548,15 +551,39 @@ def export_records() -> ResponseReturnValue:
         )
 
     filename = f"blood_pressure_records_{datetime.now():%Y%m%d}.csv"
-    response = Response("\ufeff" + output.getvalue(), content_type="text/csv; charset=utf-8")
+    response = Response(
+        "\ufeff" + output.getvalue(), content_type="text/csv; charset=utf-8"
+    )
     response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
 
-# Initialize on import as well as when run directly, so `flask --app tracker run`
-# and WSGI servers receive a ready database.
-init_db()
+def create_app(test_config: Mapping[str, Any] | None = None) -> Flask:
+    """Create and configure an isolated Flask application instance."""
+    app = Flask(
+        __name__,
+        static_folder=str(BASE_DIR / "static"),
+        static_url_path="/static",
+        template_folder=str(BASE_DIR / "templates"),
+    )
+    app.config.from_mapping(
+        DATABASE=os.environ.get(
+            "BLOOD_PRESSURE_DATABASE", str(DEFAULT_DATABASE)
+        ),
+    )
+    if test_config is not None:
+        app.config.update(test_config)
+
+    setattr(app.json, "ensure_ascii", False)
+    app.teardown_appcontext(close_db)
+    app.cli.add_command(init_db_command)
+    app.register_blueprint(bp)
+
+    with app.app_context():
+        init_db()
+
+    return app
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    create_app().run()

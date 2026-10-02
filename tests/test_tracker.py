@@ -1,24 +1,26 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from tracker import app, init_db
+from tracker import create_app, get_db, init_db
 
 
 class TrackerTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_directory = tempfile.TemporaryDirectory()
-        self.original_database = app.config["DATABASE"]
-        app.config.update(
-            TESTING=True,
-            DATABASE=str(Path(self.temp_directory.name) / "test.db"),
+        self.database = Path(self.temp_directory.name) / "test.db"
+        self.measurement_time = datetime.now().strftime("%Y-%m-%dT%H:%M")
+        self.app = create_app(
+            {
+                "TESTING": True,
+                "DATABASE": str(self.database),
+            }
         )
-        init_db()
-        self.client = app.test_client()
+        self.client = self.app.test_client()
 
     def tearDown(self):
-        app.config["DATABASE"] = self.original_database
         self.temp_directory.cleanup()
 
     def create_record(self, **overrides):
@@ -27,11 +29,33 @@ class TrackerTestCase(unittest.TestCase):
             "low_pressure": "82",
             "pulse": "72",
             "arm": "left",
-            "measured_at": "2026-10-02T08:30",
+            "measured_at": self.measurement_time,
             "note": "晨起测量",
         }
         data.update(overrides)
         return self.client.post("/submit", data=data)
+
+    def records(self):
+        return self.client.get("/api/records?days=all").get_json()
+
+    def test_factory_initializes_database_and_health_endpoint(self):
+        self.assertTrue(self.database.exists())
+        self.assertEqual(self.client.get("/health").get_json(), {"status": "ok"})
+
+        runner = self.app.test_cli_runner()
+        result = runner.invoke(args=["init-db"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("Database initialized.", result.output)
+
+    def test_database_connection_is_reused_and_closed_per_context(self):
+        with self.app.app_context():
+            first = get_db()
+            second = get_db()
+            self.assertIs(first, second)
+            first.execute("SELECT 1").fetchone()
+
+        with self.assertRaises(sqlite3.ProgrammingError):
+            first.execute("SELECT 1").fetchone()
 
     def test_submit_redirects_to_result_and_persists_all_fields(self):
         response = self.create_record()
@@ -42,27 +66,52 @@ class TrackerTestCase(unittest.TestCase):
         self.assertIn("low=82", response.headers["Location"])
         self.assertIn("pulse=72", response.headers["Location"])
 
-        records = self.client.get("/api/records?days=all").get_json()
+        records = self.records()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["pulse"], 72)
         self.assertEqual(records[0]["arm"], "left")
-        self.assertEqual(records[0]["measured_at"], "2026-10-02 08:30")
+        self.assertEqual(
+            records[0]["measured_at"], self.measurement_time.replace("T", " ")
+        )
         self.assertEqual(records[0]["note"], "晨起测量")
         self.assertEqual(records[0]["level"], "high-normal")
 
-    def test_server_validation_rejects_invalid_values(self):
-        response = self.create_record(high_pressure="70", low_pressure="90")
+    def test_server_validation_rejects_malformed_and_out_of_range_values(self):
+        invalid_cases = (
+            {"high_pressure": "abc"},
+            {"high_pressure": ""},
+            {"high_pressure": "0"},
+            {"high_pressure": "999"},
+            {"high_pressure": "70", "low_pressure": "90"},
+            {"low_pressure": "abc"},
+            {"low_pressure": "0"},
+            {"pulse": "999"},
+            {"arm": "center"},
+            {"measured_at": "not-a-date"},
+            {"note": "x" * 101},
+        )
 
-        self.assertEqual(response.status_code, 400)
-        payload = response.get_json()
-        self.assertIn("low_pressure", payload["errors"])
-        self.assertEqual(self.client.get("/api/records?days=all").get_json(), [])
+        for values in invalid_cases:
+            with self.subTest(values=values):
+                response = self.create_record(**values)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("errors", response.get_json())
 
-    def test_edit_and_delete_record(self):
-        self.create_record()
+        self.assertEqual(self.records(), [])
+
+    def test_history_is_sorted_newest_first(self):
+        self.create_record(measured_at="2025-01-01T08:00", note="较早")
+        self.create_record(measured_at="2026-01-01T08:00", note="较新")
+
+        records = self.records()
+        self.assertEqual([record["note"] for record in records], ["较新", "较早"])
+
+    def test_edit_escapes_notes_and_delete_removes_record(self):
+        self.create_record(note="{{ 7 * 7 }}<script>alert(1)</script>")
         edit_page = self.client.get("/edit/1")
         self.assertEqual(edit_page.status_code, 200)
-        self.assertIn("编辑记录".encode(), edit_page.data)
+        self.assertNotIn(b"<script>alert(1)</script>", edit_page.data)
+        self.assertIn(b"&lt;script&gt;alert(1)&lt;/script&gt;", edit_page.data)
 
         edit_response = self.client.post(
             "/edit/1",
@@ -71,20 +120,20 @@ class TrackerTestCase(unittest.TestCase):
                 "low_pressure": "76",
                 "pulse": "68",
                 "arm": "right",
-                "measured_at": "2026-10-02T09:00",
+                "measured_at": self.measurement_time,
                 "note": "复测",
             },
         )
         self.assertEqual(edit_response.status_code, 303)
 
-        record = self.client.get("/api/records?days=all").get_json()[0]
+        record = self.records()[0]
         self.assertEqual(record["high_pressure"], 118)
         self.assertEqual(record["arm"], "right")
         self.assertEqual(record["note"], "复测")
 
         delete_response = self.client.post("/delete/1")
         self.assertEqual(delete_response.status_code, 204)
-        self.assertEqual(self.client.get("/api/records?days=all").get_json(), [])
+        self.assertEqual(self.records(), [])
         self.assertEqual(self.client.post("/delete/1").status_code, 404)
 
     def test_stats_insight_and_csv_export(self):
@@ -105,9 +154,8 @@ class TrackerTestCase(unittest.TestCase):
         self.assertIn("'=unsafe formula", csv_text)
 
     def test_old_database_schema_is_migrated_without_losing_data(self):
-        database = Path(app.config["DATABASE"])
-        database.unlink()
-        connection = sqlite3.connect(database)
+        self.database.unlink()
+        connection = sqlite3.connect(self.database)
         connection.execute(
             """
             CREATE TABLE blood_pressure (
@@ -129,9 +177,10 @@ class TrackerTestCase(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        init_db()
+        with self.app.app_context():
+            init_db()
 
-        records = self.client.get("/api/records?days=all").get_json()
+        records = self.records()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["high_pressure"], 145)
         self.assertEqual(records[0]["measured_at"], "2026-10-01 08:00:00")
