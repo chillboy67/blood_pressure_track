@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>血压记录与追踪 - 首页</title>
+<link rel="stylesheet" href="static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="static/mock-data.js"></script>
+<script src="static/app.js" defer></script>
+</head>
+<body data-page="index">
+<!-- NAV START -->
+<header class="site-nav">
+<div class="nav-inner">
+<a class="brand" href="index.html">
+<span class="brand-icon" aria-hidden="true">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></svg>
+</span>
+      血压记录
+</a>
+<nav class="nav-links">
+<a href="index.html" data-nav="index">首页</a>
+<a href="result.html" data-nav="result">结果页</a>
+<a href="history.html" data-nav="history">历史记录</a>
+</nav>
+</div>
+</header>
+<!-- NAV END -->
+<main class="container">
+<!-- 统计卡片 -->
+<section class="stats-grid" aria-label="血压统计">
+<div class="stat-card">
+<div class="stat-label">最近一次测量</div>
+<div id="stat-latest"><div class="stat-value">--</div></div>
+</div>
+<div class="stat-card">
+<div class="stat-label">近 7 天平均血压</div>
+<div id="stat-avg7"><div class="stat-value">--</div></div>
+</div>
+<div class="stat-card">
+<div class="stat-label">近 30 天偏高占比</div>
+<div id="stat-ratio"><div class="stat-value">--</div></div>
+</div>
+<div class="stat-card">
+<div class="stat-label">总记录数</div>
+<div id="stat-total"><div class="stat-value">--</div></div>
+</div>
+</section>
+<div class="grid-2">
+<!-- 录入表单 -->
+<section class="card">
+<h2 class="card-title">记录血压 <span class="sub">带 * 为必填项</span></h2>
+<form id="bp-form" action="/submit" method="post" novalidate>
+<div class="form-row">
+<div class="field">
+<label for="high_pressure">收缩压（高压）<span class="req">*</span></label>
+<div class="input-unit">
+<input type="number" id="high_pressure" name="high_pressure" min="60" max="260" step="1" required placeholder="如 120">
+<span class="unit">mmHg</span>
+</div>
+<p class="field-error" id="err-high_pressure"></p>
+</div>
+<div class="field">
+<label for="low_pressure">舒张压（低压）<span class="req">*</span></label>
+<div class="input-unit">
+<input type="number" id="low_pressure" name="low_pressure" min="30" max="160" step="1" required placeholder="如 80">
+<span class="unit">mmHg</span>
+</div>
+<p class="field-error" id="err-low_pressure"></p>
+</div>
+</div>
+<div class="form-row">
+<div class="field">
+<label for="pulse">脉搏</label>
+<div class="input-unit">
+<input type="number" id="pulse" name="pulse" min="30" max="220" step="1" placeholder="选填，如 72">
+<span class="unit">次/分</span>
+</div>
+<p class="field-error" id="err-pulse"></p>
+</div>
+<div class="field">
+<label for="arm">测量部位</label>
+<select id="arm" name="arm">
+<option value="left" selected>左臂</option>
+<option value="right">右臂</option>
+</select>
+</div>
+</div>
+<div class="field">
+<label for="measured_at">测量时间</label>
+<input type="datetime-local" id="measured_at" name="measured_at">
+</div>
+<div class="field">
+<label for="note">备注</label>
+<textarea id="note" name="note" maxlength="100" placeholder="选填，最多 100 字，如：早饭前、运动后…"></textarea>
+<p class="field-error" id="err-note"></p>
+</div>
+<button type="submit" class="btn btn-primary btn-block">保存记录</button>
+</form>
+</section>
+<!-- 趋势折线图 -->
+<section class="card">
+<h2 class="card-title">
+        血压趋势
+<span class="chart-toolbar">
+<button type="button" class="chart-toggle" data-days="7">近 7 天</button>
+<button type="button" class="chart-toggle active" data-days="30">近 30 天</button>
+</span>
+</h2>
+<div class="chart-wrap">
+<canvas id="bp-chart" aria-label="血压趋势折线图"></canvas>
+<div class="chart-empty" id="chart-empty">该时间段暂无记录</div>
+</div>
+<p class="chart-legend-note">红色虚线 = 收缩压 140 mmHg 参考线，橙色虚线 = 舒张压 90 mmHg 参考线</p>
+</section>
+</div>
+<!-- 趋势解读 -->
+<section class="card">
+<h2 class="card-title">趋势解读</h2>
+<div class="insight-body">
+<span class="insight-icon" aria-hidden="true">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m6.4-.4-2.1 2.1M21 12h-3M3 12h3m-.4 6.4 2.1-2.1M12 18v3m6.4-2.6-2.1-2.1M5.6 5.6l2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+</span>
+<div class="insight-content">
+<p class="insight-text placeholder" id="insight-text">点击按钮，基于近 30 天的记录生成一段趋势解读。</p>
+<div class="insight-actions">
+<button type="button" class="btn btn-outline btn-sm" id="insight-btn">生成解读</button>
+</div>
+</div>
+</div>
+</section>
+<!-- 最近记录 -->
+<section class="card">
+<h2 class="card-title">最近记录</h2>
+<ul class="recent-list" id="recent-list"></ul>
+<div class="card-footer-link"><a href="history.html">查看全部 →</a></div>
+</section>
+</main>
+<!-- FOOTER START -->
+<footer class="site-footer">
+<p>本工具仅供记录参考，不能替代医生诊断。</p>
+</footer>
+<!-- FOOTER END -->
+</body>
+</html>

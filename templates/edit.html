@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>编辑记录 - 血压记录与追踪</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="edit">
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="brand" href="/index.html">
+        <span class="brand-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></svg>
+        </span>
+        血压记录
+      </a>
+      <nav class="nav-links">
+        <a href="/index.html">首页</a>
+        <a href="/result.html">结果页</a>
+        <a href="/history.html" class="active">历史记录</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <section class="card">
+      <h2 class="card-title">编辑记录 <span class="sub">#{{ record_id }}</span></h2>
+      <form method="post">
+        <div class="form-row">
+          <div class="field">
+            <label for="high_pressure">收缩压（高压）<span class="req">*</span></label>
+            <div class="input-unit">
+              <input type="number" id="high_pressure" name="high_pressure" min="60" max="260" step="1" required value="{{ values.high_pressure }}">
+              <span class="unit">mmHg</span>
+            </div>
+            <p class="field-error{% if errors.get('high_pressure') %} show{% endif %}">{{ errors.get('high_pressure', '') }}</p>
+          </div>
+          <div class="field">
+            <label for="low_pressure">舒张压（低压）<span class="req">*</span></label>
+            <div class="input-unit">
+              <input type="number" id="low_pressure" name="low_pressure" min="30" max="160" step="1" required value="{{ values.low_pressure }}">
+              <span class="unit">mmHg</span>
+            </div>
+            <p class="field-error{% if errors.get('low_pressure') %} show{% endif %}">{{ errors.get('low_pressure', '') }}</p>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="pulse">脉搏</label>
+            <div class="input-unit">
+              <input type="number" id="pulse" name="pulse" min="30" max="220" step="1" value="{{ values.pulse if values.pulse is not none else '' }}">
+              <span class="unit">次/分</span>
+            </div>
+            <p class="field-error{% if errors.get('pulse') %} show{% endif %}">{{ errors.get('pulse', '') }}</p>
+          </div>
+          <div class="field">
+            <label for="arm">测量部位</label>
+            <select id="arm" name="arm">
+              <option value="left"{% if values.arm != 'right' %} selected{% endif %}>左臂</option>
+              <option value="right"{% if values.arm == 'right' %} selected{% endif %}>右臂</option>
+            </select>
+            <p class="field-error{% if errors.get('arm') %} show{% endif %}">{{ errors.get('arm', '') }}</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="measured_at">测量时间</label>
+          <input type="datetime-local" id="measured_at" name="measured_at" value="{{ values.measured_at }}">
+          <p class="field-error{% if errors.get('measured_at') %} show{% endif %}">{{ errors.get('measured_at', '') }}</p>
+        </div>
+
+        <div class="field">
+          <label for="note">备注</label>
+          <textarea id="note" name="note" maxlength="100" placeholder="选填，最多 100 字">{{ values.note }}</textarea>
+          <p class="field-error{% if errors.get('note') %} show{% endif %}">{{ errors.get('note', '') }}</p>
+        </div>
+
+        <div class="result-actions">
+          <button type="submit" class="btn btn-primary">保存修改</button>
+          <a class="btn btn-outline" href="/history.html">取消</a>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>本工具仅供记录参考，不能替代医生诊断。</p>
+  </footer>
+</body>
+</html>

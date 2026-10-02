@@ -1,147 +1,105 @@
-# blood_pressure_track
+# 血压记录与追踪
 
 [English](./README.md) | **中文**
 
-基于 Flask 与 SQLite 的血压记录与追踪 Web 应用。可录入收缩压 / 舒张压，按常用阈值判断是否偏高，并将结果与时间戳持久化保存，方便在首页查看历史记录。
+一个基于 Flask、SQLite 和原生 HTML/CSS/JavaScript 的血压记录应用。当前版本已将新版前端与 Python 后端完整连接，支持录入、分级、趋势、统计、编辑、删除与 CSV 导出。
 
-本项目为 Python 课程作业，用于练习 Web 开发、数据库读写与表单交互的完整流程。
-
----
+> 本项目用于课程学习与个人数据记录，不提供医疗诊断。若血压连续异常或伴有不适，请咨询专业医生。
 
 ## 功能
 
-1. **血压录入**  
-   输入收缩压（高压）与舒张压（低压）。
-
-2. **即时判断**  
-   根据常用阈值给出 **Normal（正常）** 或 **High Blood Pressure（偏高）** 结果：
-   - 收缩压 ≥ 140，或
-   - 舒张压 ≥ 90
-
-3. **存储与历史**  
-   每次提交写入 SQLite，并在首页展示历史记录（数值、判断结果、时间）。
-
----
+- 记录收缩压、舒张压、脉搏、测量部位、测量时间与备注
+- 按六个级别展示血压状态：低血压、正常、正常高值、1/2/3 级高血压
+- 首页展示最近记录、7 天平均值、30 天偏高占比和趋势图
+- 自动生成基于近 30 天数据的规则化趋势解读
+- 历史记录按日期和分级筛选
+- 编辑、删除已有记录
+- 导出 UTF-8 CSV（可直接用 Excel 打开）
+- 自动迁移旧版 SQLite 表，不丢失原有记录
+- 后端不可用时，静态前端仍可使用 Mock 数据预览
 
 ## 技术栈
 
 | 部分 | 技术 |
-|------|------|
-| 后端 | Python + Flask |
-| 数据 | SQLite（`data.db`） |
-| 前端 | HTML（`render_template_string` 动态生成） |
-
----
+|---|---|
+| 后端 | Python 3 + Flask 3 |
+| 数据库 | SQLite |
+| 前端 | 原生 HTML / CSS / JavaScript、Chart.js |
+| 测试 | Python `unittest` + Flask Test Client |
 
 ## 项目结构
 
-```
+```text
 blood_pressure_track/
-├── tracker.py      # 应用入口：路由、判断逻辑、数据库读写
-├── README.md       # English
-└── README.cn.md    # 中文
+├── tracker.py              # Flask 路由、校验、数据库与 API
+├── index.html              # 首页和录入表单
+├── result.html             # 测量结果页
+├── history.html            # 历史记录页
+├── templates/
+│   └── edit.html           # Flask 编辑页模板
+├── static/
+│   ├── app.js              # 前端交互与 API 对接
+│   ├── style.css
+│   └── mock-data.js        # 静态预览降级数据
+├── tests/
+│   └── test_tracker.py     # 后端回归测试
+├── requirements.txt
+└── data.db                 # 首次运行自动创建（已忽略提交）
 ```
-
-首次运行会自动创建本地数据库文件 `data.db`。
-
----
 
 ## 快速开始
 
-### 1. 克隆仓库
-
 ```bash
-git clone https://github.com/chillboy67/blood_pressure_track.git
-cd blood_pressure_track
-```
-
-### 2. 创建虚拟环境（推荐）
-
-```bash
-python -m venv env
-source env/bin/activate   # Windows: env\Scripts\activate
-```
-
-### 3. 安装依赖
-
-```bash
-pip install flask
-```
-
-### 4. 启动
-
-```bash
+python3 -m venv env
+source env/bin/activate        # Windows: env\Scripts\activate
+python -m pip install -r requirements.txt
 python tracker.py
 ```
 
-### 5. 访问
-
 浏览器打开：<http://127.0.0.1:5000/>
 
----
+必须通过 Flask 的 `5000` 端口使用完整功能。`npm run dev` 只用于静态前端预览，写入、编辑、删除和导出不会真正持久化。
 
-## 使用说明
+## 接口与页面
 
-1. 在首页表单填写 **High Pressure**（收缩压）与 **Low Pressure**（舒张压）。
-2. 点击 **Submit**，查看本次判断结果与时间。
-3. 返回首页可浏览全部历史记录。
+| 路径 | 方法 | 说明 |
+|---|---|---|
+| `/`、`/index.html` | GET | 首页 |
+| `/result.html?high=&low=&pulse=` | GET | 结果页，支持查询参数直达 |
+| `/history.html` | GET | 历史记录 |
+| `/submit` | POST | 新增记录 |
+| `/edit/<id>` | GET / POST | 打开编辑页 / 保存修改 |
+| `/delete/<id>` | POST | 删除记录 |
+| `/export` | GET | 导出全部记录为 CSV |
+| `/api/records?days=30` | GET | 获取指定天数记录；`days=all` 获取全部 |
+| `/api/stats` | GET | 获取首页统计数据 |
+| `/api/insight` | POST | 获取近 30 天趋势解读 |
 
----
+`/submit` 与 `/edit/<id>` 使用以下表单字段：
 
-## 路由说明
+- `high_pressure`：必填，60–260
+- `low_pressure`：必填，30–160，且必须小于收缩压
+- `pulse`：选填，30–220
+- `arm`：`left` 或 `right`
+- `measured_at`：`datetime-local` 格式，留空时使用当前时间
+- `note`：选填，最多 100 字
 
-| 路由 | 方法 | 说明 |
-|------|------|------|
-| `/` | GET | 录入表单 + 历史记录列表 |
-| `/submit` | POST | 接收表单、判断血压、写入数据库并展示结果 |
+## 数据库兼容
 
-核心逻辑在 `tracker.py`：
+程序启动时会自动执行 `init_db()`：
 
-- `init_db()`：初始化表结构  
-- `check_hypertension(high, low)`：按阈值返回判断结果  
-- `home` / `submit`：页面展示与提交处理  
+1. 新项目创建完整的 `blood_pressure` 表；
+2. 检测旧版只有 `high_pressure`、`low_pressure`、`result`、`timestamp` 的表；
+3. 自动增加 `pulse`、`arm`、`measured_at`、`note` 字段；
+4. 将旧记录的 `timestamp` 迁移为测量时间。
 
----
+升级前仍建议自行备份重要的 `data.db`。
 
-## 数据库表结构
+## 测试
 
-表名：`blood_pressure`（文件：`data.db`）
+```bash
+env/bin/python -m unittest discover -s tests -v
+node --check static/app.js
+```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER | 主键，自增 |
-| `high_pressure` | INTEGER | 收缩压 |
-| `low_pressure` | INTEGER | 舒张压 |
-| `result` | TEXT | 判断结果 |
-| `timestamp` | TEXT | 录入时间 |
-
----
-
-## 常见问题
-
-**数据库文件不存在**  
-首次启动时会由 `init_db()` 自动创建 `data.db`。若异常，检查当前工作目录写权限。
-
-**端口被占用**  
-默认使用 `5000`。可先结束占用进程，或在代码中修改 `app.run` 的端口参数。
-
-**依赖未安装**  
-确认已激活虚拟环境，并执行 `pip install flask`。
-
----
-
-## 说明
-
-本工具中的血压判断规则仅作学习与演示，不能替代医学诊断。如有健康疑虑，请咨询专业医疗机构。
-
----
-
-## 作者
-
-- **chillboy67** — [GitHub](https://github.com/chillboy67)
-
----
-
-## 许可证
-
-MIT License。可自由使用、修改与分发。
+测试使用临时数据库，不会修改正式的 `data.db`。
